@@ -1276,6 +1276,7 @@ static void realtime_update_peer(const char *peername, struct ast_sockaddr *sock
 static void *iax2_dup_variable_datastore(void *);
 static void prune_peers(void);
 static void prune_users(void);
+static void unlink_peer(struct iax2_peer *peer);
 static void iax2_free_variable_datastore(void *);
 
 static int acf_channel_read(struct ast_channel *chan, const char *funcname, char *preparse, char *buf, size_t buflen);
@@ -3674,6 +3675,7 @@ static char *handle_cli_iax2_prune_realtime(struct ast_cli_entry *e, int cmd, st
 			} else {
 				ast_cli(a->fd, "Peer %s is not eligible for this operation.\n", a->argv[3]);
 			}
+			unlink_peer(peer);
 			peer_unref(peer);
 		}
 		if (user) {
