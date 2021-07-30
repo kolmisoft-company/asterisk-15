@@ -11075,6 +11075,15 @@ static int process_sdp(struct sip_pvt *p, struct sip_request *req, int t38action
 			} else if ((t38action == SDP_T38_INITIATE) &&
 				   p->owner && p->lastinvite) {
 				change_t38_state(p, T38_PEER_REINVITE); /* T38 Offered in re-invite from remote party */
+
+				int kolmisoft_fax_detect = 0;
+
+				ast_channel_lock(p->owner);
+				if (pbx_builtin_getvar_helper(p->owner, "MOR_FAX_DETECT") || kolmisoft_fax_detect) {
+					kolmisoft_fax_detect = 1;
+				}
+				ast_channel_unlock(p->owner);
+
 				/* If fax detection is enabled then send us off to the fax extension */
 				if (ast_test_flag(&p->flags[1], SIP_PAGE2_FAX_DETECT_T38)) {
 					ast_channel_lock(p->owner);
