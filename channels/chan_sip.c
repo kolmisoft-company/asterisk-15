@@ -855,6 +855,7 @@ AST_MUTEX_DEFINE_STATIC(sip_reload_lock);
    which are not currently in use.  */
 static pthread_t monitor_thread = AST_PTHREADT_NULL;
 
+static int sip_reloading_keep_realtime = FALSE;         /*!< Flag to keep realtime alone #Kolmisoft */
 static int sip_reloading = FALSE;                       /*!< Flag for avoiding multiple reloads at the same time */
 static enum channelreloadreason sip_reloadreason;       /*!< Reason for last reload/load of configuration */
 
@@ -32261,8 +32262,16 @@ static int reload_config(enum channelreloadreason reason)
 	int websocket_was_enabled = sip_cfg.websocket_enabled;
 
 	run_start = time(0);
-	ast_unload_realtime("sipregs");
-	ast_unload_realtime("sippeers");
+
+	/* Kolmisoft */
+	if (sip_reloading_keep_realtime == TRUE) {
+		ast_log(LOG_DEBUG, "Reload will NOT unload realtime sipregs and sippeers\n");
+	} else {
+		ast_log(LOG_DEBUG, "Reload will unload realtime sipregs and sippeers\n");
+		ast_unload_realtime("sipregs");
+	 	ast_unload_realtime("sippeers");
+	}
+
 	cfg = ast_config_load(config, config_flags);
 
 	/* We *must* have a config file otherwise stop immediately */
@@ -34116,10 +34125,16 @@ static int sip_do_reload(enum channelreloadreason reason)
 	ast_sched_dump(sched);
 
 	start_poke = time(0);
-	/* Prune peers who still are supposed to be deleted */
-	unlink_marked_peers_from_tables();
 
-	ast_debug(4, "--------------- Done destroying pruned peers\n");
+	/* Kolmisoft */
+	if (sip_reloading_keep_realtime == FALSE) {
+		/* Prune peers who still are supposed to be deleted */
+		unlink_marked_peers_from_tables();
+
+		ast_debug(4, "--------------- Done destroying pruned peers\n");
+	} else {
+		ast_debug(4, "--------------- NOT destroying pruned peers\n");
+	}
 
 	/* Send qualify (OPTIONS) to all peers */
 	sip_poke_all_peers();
@@ -34133,6 +34148,9 @@ static int sip_do_reload(enum channelreloadreason reason)
 	sip_send_all_mwi_subscriptions();
 
 	end_poke = time(0);
+
+	/* Kolmisoft */
+	sip_reloading_keep_realtime = FALSE;
 
 	ast_debug(4, "do_reload finished. peer poke/prune reg contact time = %d sec.\n", (int)(end_poke-start_poke));
 
@@ -34163,20 +34181,30 @@ static char *sip_reload(struct ast_cli_entry *e, int cmd, struct ast_cli_args *a
 	} else {
 		sip_reloading = TRUE;
 		sip_reloadreason = (a && a->fd) ? CHANNEL_CLI_RELOAD : CHANNEL_MODULE_RELOAD;
+
+		/* Kolmisoft */
+		if ((a) && (a->argc == 3) && (!strncasecmp(a->argv[2], "keeprt", 6))) {
+			sip_reloading_keep_realtime = TRUE;
+		} else {
+			sip_reloading_keep_realtime = FALSE;
+		}
 	}
 	ast_mutex_unlock(&sip_reload_lock);
 	restart_monitor();
 
-	/* Create new bogus peer possibly with new global settings. */
-	if ((new_peer = temp_peer("(bogus_peer)"))) {
-		ast_string_field_set(new_peer, md5secret, BOGUS_PEER_MD5SECRET);
-		ast_clear_flag(&new_peer->flags[0], SIP_INSECURE);
-		ao2_t_global_obj_replace_unref(g_bogus_peer, new_peer,
-			"Replacing the old bogus peer during reload.");
-		ao2_t_ref(new_peer, -1, "done with new_peer");
-	} else {
-		ast_log(LOG_ERROR, "Could not update the fake authentication peer.\n");
-		/* You probably have bigger (memory?) issues to worry about though.. */
+	/* Kolmisoft #9602 */
+	if (sip_reloading_keep_realtime == FALSE) {
+		/* Create new bogus peer possibly with new global settings. */
+		if ((new_peer = temp_peer("(bogus_peer)"))) {
+			ast_string_field_set(new_peer, md5secret, BOGUS_PEER_MD5SECRET);
+			ast_clear_flag(&new_peer->flags[0], SIP_INSECURE);
+			ao2_t_global_obj_replace_unref(g_bogus_peer, new_peer,
+				"Replacing the old bogus peer during reload.");
+			ao2_t_ref(new_peer, -1, "done with new_peer");
+		} else {
+			ast_log(LOG_ERROR, "Could not update the fake authentication peer.\n");
+			/* You probably have bigger (memory?) issues to worry about though.. */
+		}
 	}
 
 	return CLI_SUCCESS;
