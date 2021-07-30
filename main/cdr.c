@@ -725,6 +725,8 @@ struct cdr_object {
 	struct timeval start;                   /*!< When this CDR was created */
 	struct timeval answer;                  /*!< Either when the channel was answered, or when the path between channels was established */
 	struct timeval end;                     /*!< When this CDR was finalized */
+	struct timeval pdd;                     /*!< PDD */
+	double pddsec;                          /*!< PDD */
 	unsigned int sequence;                  /*!< A monotonically increasing number for each CDR */
 	struct ast_flags flags;                 /*!< Flags on the CDR */
 	AST_DECLARE_STRING_FIELDS(
@@ -1334,6 +1336,8 @@ static struct ast_cdr *cdr_object_create_public_records(struct cdr_object *cdr)
 		cdr_copy->start = it_cdr->start;
 		cdr_copy->answer = it_cdr->answer;
 		cdr_copy->end = it_cdr->end;
+		cdr_copy->pdd = it_cdr->pdd;
+		cdr_copy->pddsec = it_cdr->pddsec;
 		cdr_copy->billsec = cdr_object_get_billsec(it_cdr);
 		cdr_copy->duration = cdr_object_get_duration(it_cdr);
 
@@ -2080,6 +2084,20 @@ static int dial_status_end(const char *dialstatus)
 			strcmp(dialstatus, "PROGRESS"));
 }
 
+static int dial_status_ringing(const char *dialstatus)
+{
+	return (!strcmp(dialstatus, "RINGING") ||
+			!strcmp(dialstatus, "PROCEEDING") ||
+			!strcmp(dialstatus, "PROGRESS"));
+}
+
+static void ast_cdr_pdd(struct cdr_object *cdr)
+{
+	cdr->pdd = ast_tvnow();
+	cdr->pddsec = (cdr->pdd.tv_sec - cdr->start.tv_sec) * 1.0 + (cdr->pdd.tv_usec - cdr->start.tv_usec) / 1000000.0;
+}
+
+
 /* TOPIC ROUTER CALLBACKS */
 
 /*!
@@ -2151,6 +2169,8 @@ static void handle_dial_message(void *data, struct stasis_subscription *sub, str
 			res &= it_cdr->fn_table->process_dial_begin(it_cdr,
 					caller,
 					peer);
+		} else if (dial_status_ringing(dial_status)) {
+			ast_cdr_pdd(it_cdr);
 		} else if (dial_status_end(dial_status)) {
 			if (!it_cdr->fn_table->process_dial_end) {
 				continue;
@@ -3063,6 +3083,10 @@ void ast_cdr_format_var(struct ast_cdr *cdr, const char *name, char **ret, char 
 		cdr_get_tv(cdr->answer, raw ? NULL : fmt, workspace, workspacelen);
 	} else if (!strcasecmp(name, "end")) {
 		cdr_get_tv(cdr->end, raw ? NULL : fmt, workspace, workspacelen);
+	} else if (!strcasecmp(name, "pdd")) {
+		cdr_get_tv(cdr->pdd, raw ? NULL : fmt, workspace, workspacelen);
+	} else if (!strcasecmp(name, "pddsec")) {
+		snprintf(workspace, workspacelen, "%f", cdr->pddsec);
 	} else if (!strcasecmp(name, "duration")) {
 		snprintf(workspace, workspacelen, "%ld", cdr->end.tv_sec != 0 ? cdr->duration : (long)ast_tvdiff_ms(ast_tvnow(), cdr->start) / 1000);
 	} else if (!strcasecmp(name, "billsec")) {
@@ -3254,6 +3278,10 @@ static int cdr_object_format_property(struct cdr_object *cdr_obj, const char *na
 		cdr_get_tv(cdr_obj->answer, NULL, value, length);
 	} else if (!strcasecmp(name, "end")) {
 		cdr_get_tv(cdr_obj->end, NULL, value, length);
+	} else if (!strcasecmp(name, "pdd")) {
+		cdr_get_tv(cdr_obj->pdd, NULL, value, length);
+	} else if (!strcasecmp(name, "pddsec")) {
+		snprintf(value, length, "%f", cdr_obj->pddsec);
 	} else if (!strcasecmp(name, "duration")) {
 		snprintf(value, length, "%ld", cdr_object_get_duration(cdr_obj));
 	} else if (!strcasecmp(name, "billsec")) {
@@ -3607,6 +3635,8 @@ int ast_cdr_reset(const char *channel_name, int keep_variables)
 		memset(&it_cdr->start, 0, sizeof(it_cdr->start));
 		memset(&it_cdr->end, 0, sizeof(it_cdr->end));
 		memset(&it_cdr->answer, 0, sizeof(it_cdr->answer));
+		memset(&it_cdr->pdd, 0, sizeof(it_cdr->pdd));
+		it_cdr->pddsec = 0;
 		it_cdr->start = ast_tvnow();
 		cdr_object_check_party_a_answer(it_cdr);
 	}
@@ -3672,6 +3702,8 @@ int ast_cdr_fork(const char *channel_name, struct ast_flags *options)
 		}
 		new_cdr->start = cdr_obj->start;
 		new_cdr->answer = cdr_obj->answer;
+		new_cdr->pdd = cdr_obj->pdd;
+		new_cdr->pddsec = cdr_obj->pddsec;
 
 		/* Modify the times based on the flags passed in */
 		if (ast_test_flag(options, AST_CDR_FLAG_SET_ANSWER)

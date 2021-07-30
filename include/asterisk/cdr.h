@@ -318,6 +318,10 @@ struct ast_cdr {
 	char userfield[AST_MAX_USER_FIELD];
 	/*! Sequence field */
 	int sequence;
+	/*! Total PDD time, in seconds */
+	struct timeval pdd;
+	/*! Total time in system, in seconds */
+	double pddsec;
 
 	/*! A linked list for variables */
 	struct varshead varshead;
