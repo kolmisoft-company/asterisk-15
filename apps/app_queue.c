@@ -2765,15 +2765,34 @@ static void init_queue(struct call_queue *q)
 	q->autopause = QUEUE_AUTOPAUSE_OFF;
 	q->timeoutpriority = TIMEOUT_PRIORITY_APP;
 	q->autopausedelay = 0;
-	if (!q->members) {
-		if (q->strategy == QUEUE_STRATEGY_LINEAR || q->strategy == QUEUE_STRATEGY_RRORDERED) {
-			/* linear strategy depends on order, so we have to place all members in a single bucket */
-			q->members = ao2_container_alloc(1, member_hash_fn, member_cmp_fn);
-		} else {
-			q->members = ao2_container_alloc(37, member_hash_fn, member_cmp_fn);
-		}
-	}
-	q->found = 1;
+        if (!q->members) {
+                if (q->strategy == QUEUE_STRATEGY_LINEAR || q->strategy == QUEUE_STRATEGY_RRORDERED)
+                        /* linear strategy depends on order, so we have to place all members in a single bucket */
+                        q->members = ao2_container_alloc(1, member_hash_fn, member_cmp_fn);
+                else
+                        q->members = ao2_container_alloc(37, member_hash_fn, member_cmp_fn);
+        } else {
+                if (q->strategy == QUEUE_STRATEGY_LINEAR || q->strategy == QUEUE_STRATEGY_RRORDERED) {
+                        /* convert the ao2 container for linear strategy */
+                        int count = 0;
+                        struct ao2_container *members_new = ao2_container_alloc(1, member_hash_fn, member_cmp_fn);
+                        struct member *cur;
+
+                        struct ao2_iterator mem_iter = ao2_iterator_init(q->members, 0);
+                        while ((cur = ao2_iterator_next(&mem_iter))) {
+                                ao2_link(members_new, cur);
+                                ao2_unlink(q->members, cur);
+                                ao2_ref(cur, -1);
+                                count++;
+                        }
+                        ao2_iterator_destroy(&mem_iter);
+
+                        ao2_ref(q->members, -1);
+                        q->members = members_new;
+                        ast_log(LOG_NOTICE, "Changing to the linear/rrordered strategy. Converted %d members.\n", count);
+                }
+        }
+        q->found = 1;
 
 	ast_string_field_set(q, moh, "");
 	ast_string_field_set(q, sound_next, "queue-youarenext");
@@ -7075,8 +7094,15 @@ static int try_calling(struct queue_ent *qe, struct ast_flags opts, char **opt_a
 		}
 		qe->handled++;
 
-		ast_queue_log(queuename, ast_channel_uniqueid(qe->chan), member->membername, "CONNECT", "%ld|%s|%ld", (long) (time(NULL) - qe->start), ast_channel_uniqueid(peer),
-													(long)(orig - to > 0 ? (orig - to) / 1000 : 0));
+		char mor_original_uniqueid[60] = "";
+		const char *mor_original_uniqueid_ptr = pbx_builtin_getvar_helper(qe->chan, "MOR_ORIGINAL_UNIQUEID");;
+
+		if (mor_original_uniqueid_ptr) {
+			strncpy(mor_original_uniqueid, mor_original_uniqueid_ptr, sizeof(mor_original_uniqueid));
+		}
+
+		ast_queue_log(queuename, ast_channel_uniqueid(qe->chan), member->membername, "CONNECT", "%ld|%s|%ld|%s", (long) (time(NULL) - qe->start), ast_channel_uniqueid(peer),
+													(long)(orig - to > 0 ? (orig - to) / 1000 : 0), mor_original_uniqueid);
 
 		blob = ast_json_pack("{s: s, s: s, s: s, s: i, s: i}",
 				     "Queue", queuename,
@@ -9331,6 +9357,43 @@ static void reload_single_queue(struct ast_config *cfg, struct ast_flags *mask, 
 		ao2_callback(q->members, OBJ_NODATA | OBJ_MULTIPLE | OBJ_UNLINK, kill_dead_members, q);
 		ao2_unlock(q->members);
 	}
+
+ 	if (q->strategy == QUEUE_STRATEGY_LINEAR || q->strategy == QUEUE_STRATEGY_RRORDERED) {
+ 		/* move dynamic agents to the end */
+ 		if (member_reload) {
+ 			ast_log(LOG_NOTICE, "reload_single_queue - move dynamic agents %s.\n", queuename);
+ 			struct ao2_iterator mem_iter;
+ 			struct member *mem;
+
+ 			/* temporary dynamic container */
+ 			struct ao2_container *dynamic = ao2_container_alloc(1, member_hash_fn, member_cmp_fn);
+
+ 			/* find and remove dynamic agents */
+ 			mem_iter = ao2_iterator_init(q->members, 0);
+ 			while ((mem = ao2_iterator_next(&mem_iter))) {
+ 				if (mem->dynamic) {
+ 					ast_log(LOG_NOTICE, "reload_single_queue dynamic remove %s.\n", mem->membername);
+ 					ao2_link(dynamic, mem);
+ 					ao2_unlink(q->members, mem);
+ 				}
+ 				ao2_ref(mem, -1);
+ 			}
+ 			ao2_iterator_destroy(&mem_iter);
+
+ 			/* append dynamic agents */
+ 			mem_iter = ao2_iterator_init(dynamic, 0);
+ 			while ((mem = ao2_iterator_next(&mem_iter))) {
+ 				ast_log(LOG_NOTICE, "reload_single_queue dynamic append %s.\n", mem->membername);
+ 				ao2_link(q->members, mem);
+ 				ao2_unlink(dynamic, mem);
+ 				ao2_ref(mem, -1);
+ 			}
+ 			ao2_iterator_destroy(&mem_iter);
+
+ 			/* clean up */
+ 			ao2_ref(dynamic, -1);
+ 		}
+ 	}
 
 	if (new) {
 		queues_t_link(queues, q, "Add queue to container");
