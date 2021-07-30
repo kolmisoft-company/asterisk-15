@@ -11015,3 +11015,8 @@ void ast_channel_clear_flag(struct ast_channel *chan, unsigned int flag)
 	ast_clear_flag(ast_channel_flags(chan), flag);
 	ast_channel_unlock(chan);
 }
+
+ast_mutex_t *ast_channels_get_mutex(void)
+{
+	return ao2_object_get_lockaddr(channels);
+}

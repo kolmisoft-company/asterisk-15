@@ -5044,4 +5044,6 @@ int ast_channel_stream_topology_changed(struct ast_channel *chan, struct ast_str
  */
 void *ast_channel_get_stream_topology_change_source(struct ast_channel *chan);
 
+ast_mutex_t *ast_channels_get_mutex(void);
+
 #endif /* _ASTERISK_CHANNEL_H */
