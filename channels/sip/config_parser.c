@@ -814,7 +814,7 @@ void sip_parse_nat_option(const char *value, struct ast_flags *mask, struct ast_
 			ast_clear_flag(&flags[2], SIP_PAGE3_NAT_AUTO_COMEDIA);
 			break; /* It doesn't make sense to have no + something else */
 		} else if (!strcasecmp(this, "yes")) {
-			ast_log(LOG_WARNING, "nat=yes is deprecated, use nat=force_rport,comedia instead\n");
+			// ast_log(LOG_WARNING, "nat=yes is deprecated, use nat=force_rport,comedia instead\n");
 			ast_set_flag(&flags[0], SIP_NAT_FORCE_RPORT);
 			ast_set_flag(&flags[1], SIP_PAGE2_SYMMETRICRTP);
 			ast_clear_flag(&flags[2], SIP_PAGE3_NAT_AUTO_RPORT);
