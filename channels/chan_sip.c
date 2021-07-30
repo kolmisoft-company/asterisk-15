@@ -34324,7 +34324,7 @@ static int peer_ipcmp_cb_full(void *obj, void *arg, void *data, int flags)
 	struct sip_peer *peer = obj, *peer2 = arg;
 	char *callback = data;
 
-	if (!ast_strlen_zero(callback) && strcasecmp(peer->callback, callback)) {
+	if (!ast_strlen_zero(callback) && !ast_strlen_zero(peer->callback) && strcasecmp(peer->callback, callback)) {
 		/* We require a callback extension match, but don't have one */
 		return 0;
 	}
