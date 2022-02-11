@@ -20108,7 +20108,7 @@ int peercomparefunc(const void *a, const void *b)
 }
 
 /* the last argument is left-aligned, so we don't need a size anyways */
-#define PEERS_FORMAT2 "%-25.25s %-39.39s %-3.3s %-10.10s %-10.10s %-3.3s %-8s %-11s %-32.32s %s\n"
+#define PEERS_FORMAT2 "%-60.60s %-39.39s %-3.3s %-10.10s %-10.10s %-3.3s %-8s %-11s %-32.32s %s\n"
 
 /*! \brief Used in the sip_show_peers functions to pass parameters */
 struct show_peers_context {
