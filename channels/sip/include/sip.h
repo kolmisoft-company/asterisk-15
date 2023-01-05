@@ -1097,6 +1097,7 @@ struct sip_pvt {
 	int jointnoncodeccapability;      /*!< Joint Non codec capability */
 	int maxcallbitrate;               /*!< Maximum Call Bitrate for Video Calls */
 	int t38_maxdatagram;              /*!< T.38 FaxMaxDatagram override */
+	int trunk_3cx;                    /*!< Trunk 3CX flag */
 	int request_queue_sched_id;       /*!< Scheduler ID of any scheduled action to process queued requests */
 	int provisional_keepalive_sched_id;   /*!< Scheduler ID for provisional responses that need to be sent out to avoid cancellation */
 	const char *last_provisional;         /*!< The last successfully transmitted provisonal response message */
@@ -1362,6 +1363,7 @@ struct sip_peer {
 	int timer_b;                    /*!<  The maximum timer B (transaction timeouts) */
 	int fromdomainport;             /*!<  The From: domain port */
 	struct sip_route path;          /*!<  List of out-of-dialog outgoing routing steps (fm Path headers) */
+	int trunk_3cx;                  /*!<  Trunk 3CX flag */
 
 	/*XXX Seems like we suddenly have two flags with the same content. Why? To be continued... */
 	enum sip_peer_type type; /*!< Distinguish between "user" and "peer" types. This is used solely for CLI and manager commands */

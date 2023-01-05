@@ -6150,6 +6150,7 @@ static int create_addr_from_peer(struct sip_pvt *dialog, struct sip_peer *peer)
 	ast_copy_string(dialog->zone, peer->zone, sizeof(dialog->zone));
 	dialog->allowtransfer = peer->allowtransfer;
 	dialog->jointnoncodeccapability = dialog->noncodeccapability;
+	dialog->trunk_3cx = peer->trunk_3cx;
 
 	/* Update dialog authorization credentials */
 	ao2_lock(peer);
@@ -21190,6 +21191,7 @@ static char *_sip_show_peer(int type, int fd, struct mansession *s, const struct
 		ast_cli(fd, "  Use Reason   : %s\n", AST_CLI_YESNO(ast_test_flag(&peer->flags[1], SIP_PAGE2_Q850_REASON)));
 		ast_cli(fd, "  Encryption   : %s\n", AST_CLI_YESNO(ast_test_flag(&peer->flags[1], SIP_PAGE2_USE_SRTP)));
 		ast_cli(fd, "  RTCP Mux     : %s\n", AST_CLI_YESNO(ast_test_flag(&peer->flags[2], SIP_PAGE3_RTCP_MUX)));
+		ast_cli(fd, "  3CX Trunk    : %s\n", AST_CLI_YESNO(peer->trunk_3cx));
 		ast_cli(fd, "\n");
 		peer = sip_unref_peer(peer, "sip_show_peer: sip_unref_peer: done with peer ptr");
 	} else  if (peer && type == 1) { /* manager listing */
@@ -30498,6 +30500,31 @@ static int sip_devicestate(const char *data)
 	return res;
 }
 
+static int kolmisoft_replace_string(const char *match, const char *replace, const char *string, char *out_string, int out_size)
+{
+	char tmp_string[500] = "";
+	int max_out_size = strlen(string) + strlen(replace);
+
+	if (max_out_size >= sizeof(tmp_string) || max_out_size >= out_size) {
+		ast_debug(1, "Asked to replace %s with %s in string %s, but final string would be to large (max %d chars)\n", match, replace, string, out_size);
+		return 0;
+	}
+	strcpy(tmp_string, string);
+
+	char *start_ptr = strstr(tmp_string, match);
+
+	if (start_ptr) {
+		*start_ptr = '\0';
+		strcpy(out_string, tmp_string);
+		strcat(out_string, replace);
+		strcat(out_string, start_ptr + strlen(match));
+		return 1;
+	} else {
+		ast_debug(1, "Not matched '%s' in string '%s'\n", match, string);
+		return 0;
+	}
+}
+
 /*! \brief PBX interface function -build SIP pvt structure
  *	SIP calls initiated by the PBX arrive here.
  *
@@ -30745,8 +30772,28 @@ static struct ast_channel *sip_request_call(const char *type, struct ast_format_
 	   SIP/peername will still use the full contact
 	 */
 	if (ext) {
+        ast_debug(1, "Peer '%s', trunk 3CX = %d\n", p->username, p->trunk_3cx);
+
+		/* If trunk_3cx is enabled, replace username in fullcontact with exten */
+		if (p->trunk_3cx && !ast_strlen_zero(p->fullcontact)) {
+			char new_fullcontact[500] = "";
+
+			ast_debug(1, "Trunk 3CX option is enabled on peer '%s', changing username in fullcontact '%s' to '%s'\n",
+				p->username, p->fullcontact, ext);
+
+			if (kolmisoft_replace_string(p->username, ext, p->fullcontact, new_fullcontact, sizeof(new_fullcontact)) && strlen(new_fullcontact)) {
+				ast_debug(1, "Fullcontact changed to '%s' on peer '%s'\n", p->fullcontact, p->username);
+				ast_string_field_set(p, fullcontact, new_fullcontact);
+			} else {
+				ast_debug(1, "Failed to change fullcontact '%s' on peer '%s'\n", p->fullcontact, p->username);
+				// Backwards compatibility if we failed to replace username
+				ast_string_field_set(p, fullcontact, NULL);
+			}
+		} else {
+			ast_string_field_set(p, fullcontact, NULL);
+		}
+
 		ast_string_field_set(p, username, ext);
-		ast_string_field_set(p, fullcontact, NULL);
 	}
 	if (secret && !ast_strlen_zero(secret))
 		ast_string_field_set(p, peersecret, secret);
@@ -31862,6 +31909,11 @@ static struct sip_peer *build_peer(const char *name, struct ast_variable *v_head
 				ast_set2_flag(&peer->flags[2], ast_true(v->value), SIP_PAGE3_DISCARD_REMOTE_HOLD_RETRIEVAL);
 			} else if (!strcasecmp(v->name, "force_avp")) {
 				ast_set2_flag(&peer->flags[2], ast_true(v->value), SIP_PAGE3_FORCE_AVP);
+			} else if (!strcasecmp(v->name, "trunk_3cx")) {
+				if (sscanf(v->value, "%d", &peer->trunk_3cx) != 1) {
+					ast_log(LOG_WARNING, "'%s' is not a valid trunk_3cx value at line %d.  Using default 0.\n", v->value, v->lineno);
+					peer->trunk_3cx = 0;
+				}
 			} else {
 				ast_rtp_dtls_cfg_parse(&peer->dtls_cfg, v->name, v->value);
 			}
