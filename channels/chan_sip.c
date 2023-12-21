@@ -615,6 +615,9 @@
 	</managerEvent>
  ***/
 
+#define SIP_REGISTRY_DEL_FILE "/tmp/mor/ast_registry_diff_del"    /*!< Kolmisoft */
+#define SIP_REGISTRY_ADD_FILE "/tmp/mor/ast_registry_diff_add"    /*!< Kolmisoft */
+
 static int log_level = -1;
 
 static int min_expiry = DEFAULT_MIN_EXPIRY;        /*!< Minimum accepted registration time */
@@ -855,7 +858,8 @@ AST_MUTEX_DEFINE_STATIC(sip_reload_lock);
    which are not currently in use.  */
 static pthread_t monitor_thread = AST_PTHREADT_NULL;
 
-static int sip_reloading_keep_realtime = FALSE;         /*!< Flag to keep realtime alone #Kolmisoft */
+static int sip_registry_diff_reload = 0;                /*!< Flag shows if we need to reload registry by diff files Kolmisoft */
+static int sip_reloading_keep_realtime = FALSE;         /*!< Flag to keep realtime alone Kolmisoft */
 static int sip_reloading = FALSE;                       /*!< Flag for avoiding multiple reloads at the same time */
 static enum channelreloadreason sip_reloadreason;       /*!< Reason for last reload/load of configuration */
 
@@ -9599,6 +9603,51 @@ static struct sip_pvt *__find_call(struct sip_request *req, struct ast_sockaddr 
 static int sip_register(const char *value, int lineno)
 {
 	struct sip_registry *reg;
+	FILE *fp = NULL;
+
+	/*
+		Kolmisoft
+
+		When doing 'sip reload keeprt' and when option 'registry_diff_reload' is enabled,
+		check special diff file to know if registry was modified and needs to be added
+	*/
+	if (sip_reloading_keep_realtime == TRUE && sip_registry_diff_reload == 1) {
+		fp = fopen(SIP_REGISTRY_ADD_FILE, "r");
+
+		if (fp) {
+			char *line = NULL;
+			size_t len = 0;
+			ssize_t read;
+			int reg_diff_found = 0;
+			char reg_line_to_compare[300];
+
+			/* Add new line at the end of reg_line */
+			sprintf(reg_line_to_compare, "%s\n", value);
+
+			while ((read = getline(&line, &len, fp)) != -1) {
+				if (strcmp(line, reg_line_to_compare) == 0) {
+					reg_diff_found = 1;
+					break;
+				}
+			}
+
+			if (line) {
+				free(line);
+				line = NULL;
+			}
+
+			fclose(fp);
+
+			if (reg_diff_found) {
+				ast_debug(1, "Adding registry [%s]\n", value);
+			} else {
+				ast_debug(1, "Not adding registry [%s], no changes were found\n", value);
+				return 0;
+			}
+		} else {
+			ast_debug(1, "Can't open " SIP_REGISTRY_ADD_FILE ", registry [%s] will be added\n", value);
+		}
+	}
 
 	reg = ao2_t_find(registry_list, value, OBJ_SEARCH_KEY, "check for existing registry");
 	if (reg) {
@@ -15861,6 +15910,20 @@ static int __start_reregister_timeout(const void *data)
 static void start_reregister_timeout(struct sip_registry *reg, int ms)
 {
 	struct reregister_data *sched_data;
+
+	/*
+		Kolmisoft
+
+		If registry was not reloaded, skip first reregistry (which should happen on reload)
+	*/
+	if (sip_reloading_keep_realtime && reg->skip_reregister_on_reload) {
+		ast_debug(1, "Skipping reregister on reload for registry [%s]\n", reg->configvalue);
+		reg->skip_reregister_on_reload = 0;
+		return;
+	} else {
+		reg->skip_reregister_on_reload = 0;
+		ast_debug(1, "Not skipping reregister for registry [%s]\n", reg->configvalue);
+	}
 
 	sched_data = ast_malloc(sizeof(*sched_data));
 	if (!sched_data) {
@@ -32271,6 +32334,52 @@ static int __cleanup_registration(const void *data)
 static int cleanup_registration(void *obj, void *arg, int flags)
 {
 	struct sip_registry *reg = obj;
+	FILE *fp = NULL;
+
+	/*
+		Kolmisoft
+
+		When doing 'sip reload keeprt' and when option 'registry_diff_reload' is enabled,
+		check special diff file to know if registry was modified and needs to be removed
+	*/
+	if (sip_reloading_keep_realtime == TRUE && sip_registry_diff_reload == 1) {
+		fp = fopen(SIP_REGISTRY_DEL_FILE, "r");
+
+		if (fp) {
+			char *line = NULL;
+			size_t len = 0;
+			ssize_t read;
+			int reg_diff_found = 0;
+			char reg_line_to_compare[300];
+
+			/* Add new line at the end of reg_line */
+			sprintf(reg_line_to_compare, "%s\n", reg->configvalue);
+
+			while ((read = getline(&line, &len, fp)) != -1) {
+				if (strcmp(line, reg_line_to_compare) == 0) {
+					reg_diff_found = 1;
+					break;
+				}
+			}
+
+			if (line) {
+				free(line);
+				line = NULL;
+			}
+
+			fclose(fp);
+
+			if (reg_diff_found) {
+				ast_debug(1, "Removing registry [%s]\n", reg->configvalue);
+			} else {
+				ast_debug(1, "Not removing registry [%s], no changes were found\n", reg->configvalue);
+				reg->skip_reregister_on_reload = 1;
+				return 0;
+			}
+		} else {
+			ast_debug(1, "Can't open " SIP_REGISTRY_DEL_FILE ", registry [%s] will be removed\n", reg->configvalue);
+		}
+	}
 
 	ao2_t_ref(reg, +1, "cleanup_registration action");
 	if (ast_sched_add(sched, 0, __cleanup_registration, reg) < 0) {
@@ -32322,6 +32431,13 @@ static int reload_config(enum channelreloadreason reason)
 		ast_log(LOG_DEBUG, "Reload will unload realtime sipregs and sippeers\n");
 		ast_unload_realtime("sipregs");
 	 	ast_unload_realtime("sippeers");
+	}
+
+	/* Kolmisoft */
+	if (sip_registry_diff_reload == 1) {
+		ast_log(LOG_DEBUG, "Reload will unload registry entries by diff files\n");
+	} else {
+		ast_log(LOG_DEBUG, "Reload will unload all registry entries\n");
 	}
 
 	cfg = ast_config_load(config, config_flags);
@@ -32964,6 +33080,9 @@ static int reload_config(enum channelreloadreason reason)
 			} else {
 				add_sip_domain(ast_strip(domain), SIP_DOMAIN_CONFIG, cntx ? ast_strip(cntx) : "");
 			}
+
+		} else if (!strcasecmp(v->name, "registry_diff_reload")) { /* Kolmisoft */
+			sip_registry_diff_reload = atoi(v->value);
 		} else if (!strcasecmp(v->name, "register")) {
 			if (sip_register(v->value, v->lineno) == 0) {
 				registry_count++;
@@ -34204,6 +34323,15 @@ static int sip_do_reload(enum channelreloadreason reason)
 	/* Kolmisoft */
 	sip_reloading_keep_realtime = FALSE;
 
+	/*
+		Kolmisoft
+
+		Unlink registry del/add diff files
+	*/
+	unlink(SIP_REGISTRY_DEL_FILE);
+	unlink(SIP_REGISTRY_ADD_FILE);
+	ast_debug(1, "--------------- SIP removing registry diff files\n");
+
 	ast_debug(4, "do_reload finished. peer poke/prune reg contact time = %d sec.\n", (int)(end_poke-start_poke));
 
 	ast_debug(4, "--------------- SIP reload done\n");
@@ -35302,6 +35430,19 @@ static int load_module(void)
 		ast_log(LOG_WARNING, "Unable to register history log level\n");
 	}
 
+	/*
+		Kolmisoft
+
+		Remove registry diff files on load start
+	*/
+	if (access(SIP_REGISTRY_DEL_FILE, F_OK) == 0) {
+	    unlink(SIP_REGISTRY_DEL_FILE);
+	}
+
+	if (access(SIP_REGISTRY_ADD_FILE, F_OK) == 0) {
+	    unlink(SIP_REGISTRY_ADD_FILE);
+	}
+
 	if (STASIS_MESSAGE_TYPE_INIT(session_timeout_type)) {
 		unload_module();
 		return AST_MODULE_LOAD_DECLINE;
@@ -35485,6 +35626,19 @@ static int load_module(void)
 		ast_websocket_add_protocol("sip", sip_websocket_callback);
 	}
 
+	/*
+		Kolmisoft
+
+		Remove registry diff files on load end
+	*/
+	if (access(SIP_REGISTRY_DEL_FILE, F_OK) == 0) {
+	    unlink(SIP_REGISTRY_DEL_FILE);
+	}
+
+	if (access(SIP_REGISTRY_ADD_FILE, F_OK) == 0) {
+	    unlink(SIP_REGISTRY_ADD_FILE);
+	}
+
 	return AST_MODULE_LOAD_SUCCESS;
 }
 
@@ -35497,6 +35651,19 @@ static int unload_module(void)
 	struct timeval start;
 
 	ast_sched_dump(sched);
+
+	/*
+		Kolmisoft
+
+		Remove registry diff files on stop
+	*/
+	if (access(SIP_REGISTRY_DEL_FILE, F_OK) == 0) {
+	    unlink(SIP_REGISTRY_DEL_FILE);
+	}
+
+	if (access(SIP_REGISTRY_ADD_FILE, F_OK) == 0) {
+	    unlink(SIP_REGISTRY_ADD_FILE);
+	}
 
 	ast_sip_api_provider_unregister();
 
