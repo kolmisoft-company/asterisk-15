@@ -782,6 +782,7 @@ struct sip_settings {
 	int default_max_forwards;    /*!< Default max forwards (SIP Anti-loop) */
 	int websocket_write_timeout; /*!< Socket write timeout for websocket transports, in ms */
 	int websocket_enabled;       /*!< Are websockets enabled? */
+	int allow_alphanumeric_usereqphone;       /*!< Kolmisoft */
 };
 
 struct ast_websocket;

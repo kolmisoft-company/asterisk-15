@@ -14403,7 +14403,7 @@ static void initreqprep(struct sip_request *req, struct sip_pvt *p, int sipmetho
 				break;
 		}
 		/* If we have only digits, add ;user=phone to the uri */
-		if (!*s)
+		if (!*s || sip_cfg.allow_alphanumeric_usereqphone)
 			urioptions = ";user=phone";
 	}
 
@@ -14553,7 +14553,11 @@ static void initreqprep(struct sip_request *req, struct sip_pvt *p, int sipmetho
  		/*! \todo Need to add back the VXML URL here at some point, possibly use build_string for all this junk */
  		if (!strchr(p->todnid, '@')) {
  			/* We have no domain in the dnid */
-			ret = ast_str_set(&to, 0, "<sip:%s@%s>%s%s", p->todnid, p->tohost, ast_strlen_zero(p->theirtag) ? "" : ";tag=", p->theirtag);
+			if (ast_test_flag(&p->flags[0], SIP_USEREQPHONE)) {
+				ret = ast_str_set(&to, 0, "<sip:%s@%s%s>%s%s", p->todnid, p->tohost, urioptions, ast_strlen_zero(p->theirtag) ? "" : ";tag=", p->theirtag);
+			} else {
+				ret = ast_str_set(&to, 0, "<sip:%s@%s>%s%s", p->todnid, p->tohost, ast_strlen_zero(p->theirtag) ? "" : ";tag=", p->theirtag);
+			}
  		} else {
 			ret = ast_str_set(&to, 0, "<sip:%s>%s%s", p->todnid, ast_strlen_zero(p->theirtag) ? "" : ";tag=", p->theirtag);
  		}
@@ -33250,6 +33254,8 @@ static int reload_config(enum channelreloadreason reason)
 			}
 		} else if (!strcasecmp(v->name, "websocket_enabled")) {
 			sip_cfg.websocket_enabled = ast_true(v->value);
+		} else if (!strcasecmp(v->name, "allow_alphanumeric_usereqphone")) {  /* Kolmisoft */
+			sip_cfg.allow_alphanumeric_usereqphone = ast_true(v->value);
 		}
 	}
 
